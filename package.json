@@ -1,0 +1,13 @@
+{
+  "name": "vestrex-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "openai": "^4.20.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
