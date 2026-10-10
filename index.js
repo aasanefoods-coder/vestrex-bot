@@ -1,4 +1,4 @@
-// index.js — Vestrex WhatsApp AI Bot v3.2.1 (Deployment Fixed)
+// index.js — Vestrex WhatsApp AI Bot v3.2.2 (Dashboard Fix)
 const express = require('express');
 const { OpenAI } = require('openai');
 const multer = require('multer');
@@ -17,10 +17,9 @@ const DATA_DIR = path.join(__dirname, 'data');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 [DATA_DIR, UPLOADS_DIR].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-        console.log(`📁 Created directory: ${dir}`);
-    }
+    try {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    } catch (e) { console.error('Dir error:', e); }
 });
 
 const FILES = {
@@ -28,41 +27,45 @@ const FILES = {
     settings: path.join(DATA_DIR, 'settings.json'),
     prompt: path.join(DATA_DIR, 'prompt.json'),
     media: path.join(DATA_DIR, 'media.json'),
-    scheduled: path.join(DATA_DIR, 'scheduled.json'),
     pausedAi: path.join(DATA_DIR, 'paused.json')
 };
 
 function loadJSON(filePath, defaultValue) {
-    try { if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf-8')); } 
-    catch (err) { console.error(`❌ Load error ${filePath}:`, err.message); }
+    try {
+        if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    } catch (err) { console.error(`Load error ${filePath}:`, err.message); }
     return defaultValue;
 }
+
 function saveJSON(filePath, data) {
-    try { fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8'); return true; } 
-    catch (err) { console.error(`❌ Save error ${filePath}:`, err.message); return false; }
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+        return true;
+    } catch (err) { console.error(`Save error ${filePath}:`, err.message); return false; }
 }
 
 const chatStore = new Map(loadJSON(FILES.chats, []));
 const aiPausedSet = new Set(loadJSON(FILES.pausedAi, []));
-let mediaLibrary = loadJSON(FILES.media, []);
-let scheduledMessages = loadJSON(FILES.scheduled, []);
 
 let botSettings = loadJSON(FILES.settings, {
     botName: 'Vestrex Bot', language: 'Roman Urdu + English',
     welcomeMessage: 'Assalam o Alaikum! 👕 Vestrex Clothing mein khush aamdeed! Kaise madad kar sakta hoon?',
     awayMessage: 'Shukriya aapke message ka! Humari team jaldi reply karegi. 🙏',
     isAway: false, autoReplyDelay: 0, workingHoursEnabled: false, workingHoursStart: '09:00', workingHoursEnd: '22:00',
-    sendWelcomeImage: false, welcomeImageId: null, maxAIResponseLength: 300, aiTemperature: 0.7, aiModel: 'gpt-4o-mini'
+    maxAIResponseLength: 300, aiTemperature: 0.7, aiModel: 'gpt-4o-mini'
 });
 
-let systemPrompt = loadJSON(FILES.prompt, { prompt: `Tu Vestrex Clothing ka official WhatsApp sales assistant hai. Tera naam "Vestrex Bot" hai.\nTu Pakistani Roman Urdu aur English mix mein baat karega.\n\nBRAND INFO:\n- Brand: Vestrex\n- Products: T-Shirts, Polo Shirts, Dress Shirts\n- Sizes: S, M, L, XL\n- Delivery: Karachi 150 PKR | Other 250 PKR\n- COD Available\n\nPRICING:\n- Basic T-Shirt: 899 PKR\n- Premium: 1299 PKR\n- Polo: 1499 PKR\n- Dress Shirt: 1799 PKR\n\nRULES:\n1. Friendly reh\n2. Short replies de (2-3 lines max)\n3. Order details le: Name, City, Address, Phone, Product, Size` }).prompt;
+let systemPrompt = loadJSON(FILES.prompt, { 
+    prompt: `Tu Vestrex Clothing ka official WhatsApp sales assistant hai. Tera naam "Vestrex Bot" hai.\nTu Pakistani Roman Urdu aur English mix mein baat karega.\n\nBRAND INFO:\n- Brand: Vestrex\n- Products: T-Shirts, Polo Shirts, Dress Shirts\n- Sizes: S, M, L, XL\n- Delivery: Karachi 150 PKR | Other 250 PKR\n- COD Available\n\nPRICING:\n- Basic T-Shirt: 899 PKR\n- Premium: 1299 PKR\n- Polo: 1499 PKR\n- Dress Shirt: 1799 PKR\n\nRULES:\n1. Friendly reh\n2. Short replies de (2-3 lines max)\n3. Order details le: Name, City, Address, Phone, Product, Size` 
+}).prompt;
 
 function saveChats() { saveJSON(FILES.chats, Array.from(chatStore.entries())); }
 function savePaused() { saveJSON(FILES.pausedAi, Array.from(aiPausedSet)); }
-setInterval(() => { saveChats(); savePaused(); }, 30000);
+
+setInterval(() => { saveChats(); savePaused(); }, 15000);
 
 // ============================================
-// UPLOADS & MULTER SETUP
+// UPLOADS SETUP
 // ============================================
 app.use('/uploads', express.static(UPLOADS_DIR));
 const storage = multer.diskStorage({
@@ -83,7 +86,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'vestrex123secret';
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // ============================================
-// WHATSAPP API HELPERS (Built-in Fetch)
+// WHATSAPP API HELPERS
 // ============================================
 async function uploadMediaToWhatsApp(filePath, mimeType) {
     try {
@@ -96,9 +99,7 @@ async function uploadMediaToWhatsApp(filePath, mimeType) {
             method: 'POST', headers: { 'Authorization': `Bearer ${WHATSAPP_TOKEN}`, ...formData.getHeaders() }, body: formData
         });
         const data = await response.json();
-        if (data.id) return data.id;
-        console.error('WA Upload Failed:', data);
-        return null;
+        return data.id || null;
     } catch (err) { console.error('Upload Error:', err.message); return null; }
 }
 
@@ -109,7 +110,7 @@ async function sendWAMessage(to, payload) {
             body: JSON.stringify({ messaging_product: 'whatsapp', to, ...payload })
         });
         const data = await response.json();
-        if (data.error) { console.error('WA Send Error:', data.error); return { success: false, error: data.error.message }; }
+        if (data.error) return { success: false, error: data.error.message };
         return { success: true };
     } catch (err) { return { success: false, error: err.message }; }
 }
@@ -137,19 +138,30 @@ app.post('/webhook', async (req, res) => {
         for (const entry of entries) {
             for (const change of entry.changes || []) {
                 const value = change.value;
-                if (!value.messages) continue;
+                if (!value || !value.messages) continue;
                 
-                const contactName = value.contacts?.[0]?.profile?.name || 'Customer';
+                const contactName = value.contacts?.[0]?.profile?.name || '';
                 for (const msg of value.messages) {
                     const phone = msg.from;
-                    if (!chatStore.has(phone)) chatStore.set(phone, { messages: [], name: contactName, lastSeen: new Date().toISOString(), aiPaused: false, unread: 0 });
+                    if (!phone) continue;
+
+                    if (!chatStore.has(phone)) {
+                        chatStore.set(phone, { 
+                            messages: [], 
+                            name: contactName || '+' + phone, 
+                            lastSeen: new Date().toISOString(), 
+                            aiPaused: false, 
+                            unread: 0 
+                        });
+                    }
                     const chat = chatStore.get(phone);
-                    
-                    chat.name = contactName; chat.lastSeen = new Date().toISOString(); chat.unread += 1;
+                    if (contactName) chat.name = contactName;
+                    chat.lastSeen = new Date().toISOString();
+                    chat.unread = (chat.unread || 0) + 1;
                     
                     let content = `[${msg.type}]`, type = msg.type;
-                    if (msg.type === 'text') content = msg.text.body;
-                    else if (msg.type === 'image') content = msg.image.caption || '📷 Photo';
+                    if (msg.type === 'text') content = msg.text?.body || '';
+                    else if (msg.type === 'image') content = msg.image?.caption || '📷 Photo';
                     else if (msg.type === 'audio') content = '🎤 Voice Note';
                     
                     chat.messages.push({ role: 'user', content, timestamp: new Date().toISOString(), type });
@@ -172,45 +184,80 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ============================================
-// API ROUTES
+// API ROUTES FOR DASHBOARD
 // ============================================
 app.get('/api/chats', (req, res) => {
-    const chats = Array.from(chatStore.entries()).map(([phone, chat]) => ({
-        phone, name: chat.name,
-        lastMessage: chat.messages.length ? chat.messages[chat.messages.length - 1].content.substring(0, 50) : '',
-        lastSeen: chat.lastSeen, aiPaused: aiPausedSet.has(phone), unread: chat.unread
-    })).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
-    res.json(chats);
+    try {
+        const chats = Array.from(chatStore.entries()).map(([phone, chat]) => {
+            const msgs = chat.messages || [];
+            const lastMsgObj = msgs.length ? msgs[msgs.length - 1] : null;
+            const lastMsgText = lastMsgObj ? String(lastMsgObj.content || lastMsgObj.type || '') : '';
+            
+            return {
+                phone: String(phone || ''),
+                name: String(chat.name || phone || 'Customer'),
+                lastMessage: lastMsgText.substring(0, 50),
+                lastSeen: chat.lastSeen || new Date().toISOString(),
+                aiPaused: Boolean(aiPausedSet.has(phone) || chat.aiPaused),
+                unread: Number(chat.unread || 0)
+            };
+        }).sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen));
+        
+        res.json(chats);
+    } catch (e) {
+        console.error('API /api/chats Error:', e);
+        res.json([]);
+    }
 });
 
 app.get('/api/chats/:phone', (req, res) => {
-    const chat = chatStore.get(req.params.phone);
+    const phone = req.params.phone;
+    const chat = chatStore.get(phone);
     if (!chat) return res.status(404).json({ error: 'Not found' });
     chat.unread = 0; saveChats();
-    res.json({ phone: req.params.phone, name: chat.name, aiPaused: aiPausedSet.has(req.params.phone), messages: chat.messages });
+    res.json({ 
+        phone: String(phone), 
+        name: String(chat.name || phone), 
+        aiPaused: Boolean(aiPausedSet.has(phone) || chat.aiPaused), 
+        messages: chat.messages || [] 
+    });
 });
 
-// TEXT REPLY
+// SEND TEXT REPLY
 app.post('/api/reply', async (req, res) => {
     const { phone, message } = req.body;
+    if (!phone || !message) return res.status(400).json({ error: 'Missing phone or message' });
+    
     aiPausedSet.add(phone); savePaused();
-    const chat = chatStore.get(phone); if (chat) chat.aiPaused = true;
+    let chat = chatStore.get(phone);
+    if (!chat) {
+        chatStore.set(phone, { messages: [], name: '+' + phone, lastSeen: new Date().toISOString(), aiPaused: true, unread: 0 });
+        chat = chatStore.get(phone);
+    }
+    chat.aiPaused = true;
     
     const sent = await sendWAMessage(phone, { type: 'text', text: { body: message } });
     if (sent.success) {
         chat.messages.push({ role: 'assistant', content: message, timestamp: new Date().toISOString(), sender: 'admin', type: 'text' });
-        saveChats(); return res.json({ success: true });
+        chat.lastSeen = new Date().toISOString();
+        saveChats();
+        return res.json({ success: true });
     }
     res.status(500).json({ error: sent.error });
 });
 
-// MEDIA REPLY
+// SEND MEDIA REPLY
 app.post('/api/reply-media', upload.single('media'), async (req, res) => {
     const { phone, caption } = req.body;
-    if (!req.file) return res.status(400).json({ error: 'No file received' });
+    if (!phone || !req.file) return res.status(400).json({ error: 'Missing file or phone' });
     
     aiPausedSet.add(phone); savePaused();
-    const chat = chatStore.get(phone); if (chat) chat.aiPaused = true;
+    let chat = chatStore.get(phone);
+    if (!chat) {
+        chatStore.set(phone, { messages: [], name: '+' + phone, lastSeen: new Date().toISOString(), aiPaused: true, unread: 0 });
+        chat = chatStore.get(phone);
+    }
+    chat.aiPaused = true;
 
     const waMediaId = await uploadMediaToWhatsApp(req.file.path, req.file.mimetype);
     if (!waMediaId) return res.status(500).json({ error: 'Meta upload failed' });
@@ -223,18 +270,25 @@ app.post('/api/reply-media', upload.single('media'), async (req, res) => {
     const sent = await sendWAMessage(phone, payload);
     if (sent.success) {
         chat.messages.push({ role: 'assistant', content: caption || `[${type} sent]`, timestamp: new Date().toISOString(), sender: 'admin', type, mediaUrl: `/uploads/${req.file.filename}` });
-        saveChats(); return res.json({ success: true });
+        chat.lastSeen = new Date().toISOString();
+        saveChats();
+        return res.json({ success: true });
     }
     res.status(500).json({ error: sent.error });
 });
 
-// VOICE REPLY
+// SEND VOICE
 app.post('/api/send-voice', upload.single('voice'), async (req, res) => {
     const { phone } = req.body;
-    if (!req.file) return res.status(400).json({ error: 'No audio received' });
+    if (!phone || !req.file) return res.status(400).json({ error: 'Missing voice file or phone' });
     
     aiPausedSet.add(phone); savePaused();
-    const chat = chatStore.get(phone); if (chat) chat.aiPaused = true;
+    let chat = chatStore.get(phone);
+    if (!chat) {
+        chatStore.set(phone, { messages: [], name: '+' + phone, lastSeen: new Date().toISOString(), aiPaused: true, unread: 0 });
+        chat = chatStore.get(phone);
+    }
+    chat.aiPaused = true;
 
     const waMediaId = await uploadMediaToWhatsApp(req.file.path, 'audio/ogg; codecs=opus');
     if (!waMediaId) return res.status(500).json({ error: 'Voice upload failed' });
@@ -242,13 +296,26 @@ app.post('/api/send-voice', upload.single('voice'), async (req, res) => {
     const sent = await sendWAMessage(phone, { type: 'audio', audio: { id: waMediaId } });
     if (sent.success) {
         chat.messages.push({ role: 'assistant', content: '🎤 Voice note sent', timestamp: new Date().toISOString(), sender: 'admin', type: 'audio', mediaUrl: `/uploads/${req.file.filename}` });
-        saveChats(); return res.json({ success: true });
+        chat.lastSeen = new Date().toISOString();
+        saveChats();
+        return res.json({ success: true });
     }
     res.status(500).json({ error: sent.error });
 });
 
-app.post('/api/pause/:phone', (req, res) => { aiPausedSet.add(req.params.phone); savePaused(); res.json({ success: true }); });
-app.post('/api/resume/:phone', (req, res) => { aiPausedSet.delete(req.params.phone); savePaused(); res.json({ success: true }); });
+app.post('/api/pause/:phone', (req, res) => { 
+    aiPausedSet.add(req.params.phone); 
+    const chat = chatStore.get(req.params.phone); if (chat) chat.aiPaused = true;
+    savePaused(); saveChats(); 
+    res.json({ success: true }); 
+});
+
+app.post('/api/resume/:phone', (req, res) => { 
+    aiPausedSet.delete(req.params.phone); 
+    const chat = chatStore.get(req.params.phone); if (chat) chat.aiPaused = false;
+    savePaused(); saveChats(); 
+    res.json({ success: true }); 
+});
 
 app.get('/api/prompt', (req, res) => res.json({ prompt: systemPrompt }));
 app.post('/api/prompt', (req, res) => { systemPrompt = req.body.prompt; saveJSON(FILES.prompt, { prompt: systemPrompt }); res.json({ success: true }); });
@@ -256,14 +323,14 @@ app.post('/api/prompt', (req, res) => { systemPrompt = req.body.prompt; saveJSON
 app.get('/api/settings', (req, res) => res.json(botSettings));
 app.post('/api/settings', (req, res) => { botSettings = { ...botSettings, ...req.body }; saveJSON(FILES.settings, botSettings); res.json({ success: true }); });
 
-// DASHBOARD ROUTE
+// SERVE DASHBOARD
 app.get('/admin', (req, res) => res.send(getAdminHTML()));
 
 // START SERVER
-app.listen(PORT, () => console.log(`🚀 Vestrex Bot v3.2.1 on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Vestrex Bot v3.2.2 Running on port ${PORT}`));
 
 // ============================================
-// ADMIN DASHBOARD HTML
+// ADMIN DASHBOARD HTML (BULLETPROOF FRONTEND)
 // ============================================
 function getAdminHTML() {
 return `<!DOCTYPE html>
@@ -271,7 +338,7 @@ return `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Vestrex Admin v3.2.1</title>
+<title>Vestrex Admin Dashboard</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -279,7 +346,7 @@ return `<!DOCTYPE html>
     --text: #e2e8f0; --dim: #94a3b8; --accent: #6366f1; --accent-hover: #4f46e5;
     --green: #10b981; --red: #ef4444; --orange: #f59e0b;
 }
-html, body { height: 100dvh; overflow: hidden; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
+html, body { height: 100dvh; overflow: hidden; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; }
 .app-container { display: flex; height: 100dvh; width: 100vw; overflow: hidden; }
 .sidebar { width: 340px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; z-index: 10; }
 .sb-header { padding: 16px; border-bottom: 1px solid var(--border); }
@@ -290,7 +357,7 @@ html, body { height: 100dvh; overflow: hidden; background: var(--bg); color: var
 .chat-list { flex: 1; overflow-y: auto; padding: 8px; }
 .chat-item { display: flex; align-items: center; padding: 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; border: 1px solid transparent; }
 .chat-item:hover { background: var(--card); }
-.chat-item.active { background: rgba(99,102,241,0.1); border-color: var(--accent); }
+.chat-item.active { background: rgba(99,102,241,0.15); border-color: var(--accent); }
 .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: bold; color: #fff; flex-shrink: 0; margin-right: 12px; }
 .chat-info { flex: 1; min-width: 0; }
 .chat-name { font-size: 14px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -356,13 +423,15 @@ textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); colo
         <div style="padding: 10px; border-bottom: 1px solid var(--border);">
             <input type="text" id="search" placeholder="🔍 Search chats..." style="width: 100%; background: var(--bg); border: 1px solid var(--border); color: white; padding: 8px 12px; border-radius: 8px; outline: none; font-size: 13px;">
         </div>
-        <div class="chat-list" id="chatList"></div>
+        <div class="chat-list" id="chatList">
+            <div style="text-align:center; color:var(--dim); padding:20px;">Loading chats...</div>
+        </div>
     </div>
 
     <div class="main-area">
         <div id="noChat" class="no-chat-selected">
-            <h2 style="color:white; margin-bottom:10px;">Welcome Back!</h2>
-            <p>Select a chat from the left to start messaging.</p>
+            <h2 style="color:white; margin-bottom:10px;">Vestrex Live Chat</h2>
+            <p>Select a customer from the left sidebar to view messages.</p>
         </div>
 
         <div id="chatView" style="display: none; flex-direction: column; height: 100%;">
@@ -398,7 +467,7 @@ textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); colo
                 </div>
 
                 <div class="tools">
-                    <button class="tool-btn" onclick="document.getElementById('fileInput').click()">📎 Attach Photo/Video</button>
+                    <button class="tool-btn" onclick="document.getElementById('fileInput').click()">📎 Photo / Document</button>
                     <button class="tool-btn" onclick="startVoice()">🎤 Record Voice</button>
                 </div>
                 
@@ -423,7 +492,7 @@ textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); colo
 
 <div class="modal-bg" id="m-settings">
     <div class="modal">
-        <div class="m-head"><span>⚙️ Bot Settings</span><button class="modal-x" style="background:none; border:none; color:white; font-size:20px;" onclick="closeModal('m-settings')">✕</button></div>
+        <div class="m-head"><span>⚙️ Bot Settings</span><button class="btn-close" onclick="closeModal('m-settings')">✕</button></div>
         <div class="m-body">
             <label style="color:var(--dim); font-size:12px;">Welcome Message</label>
             <input type="text" id="setWelcome">
@@ -440,13 +509,15 @@ textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); colo
 <div id="toast">Message</div>
 
 <script>
-let chats = [], currentPhone = null, pollTimer = null;
-let pendingFile = null;
-let mediaRec = null, audioChunks = [], recTimer = null, recSecs = 0, recBlob = null;
+var chats = [], currentPhone = null, pollTimer = null;
+var pendingFile = null;
+var mediaRec = null, audioChunks = [], recTimer = null, recSecs = 0, recBlob = null;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
     fetchChats();
-    pollTimer = setInterval(() => { if(!pendingFile && !recBlob) fetchChats(true); }, 3000);
+    pollTimer = setInterval(function() { 
+        if(!pendingFile && !recBlob) fetchChats(true); 
+    }, 2000);
 });
 
 function showToast(msg, isErr) {
@@ -456,35 +527,52 @@ function showToast(msg, isErr) {
 }
 
 function fetchChats(silent) {
-    fetch('/api/chats').then(function(r){ return r.json(); }).then(function(data){
-        chats = data; renderSidebar();
+    fetch('/api/chats')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        chats = Array.isArray(data) ? data : [];
+        renderSidebar();
         if (currentPhone) fetchMessages(currentPhone, silent);
-    }).catch(function(e){});
+    })
+    .catch(function(e) { console.error('Fetch chats error', e); });
 }
 
 function renderSidebar() {
-    var term = document.getElementById('search').value.toLowerCase();
+    var term = (document.getElementById('search').value || '').toLowerCase();
     var list = document.getElementById('chatList');
-    var filtered = chats.filter(function(c){ return c.name.toLowerCase().indexOf(term) > -1 || c.phone.indexOf(term) > -1; });
     
-    if(!filtered.length) { list.innerHTML = '<div style="text-align:center; color:var(--dim); padding:20px;">No chats</div>'; return; }
+    var filtered = chats.filter(function(c) {
+        var nameStr = String(c.name || c.phone || 'Customer').toLowerCase();
+        var phoneStr = String(c.phone || '');
+        return nameStr.indexOf(term) > -1 || phoneStr.indexOf(term) > -1;
+    });
+    
+    if(!filtered.length) { 
+        list.innerHTML = '<div style="text-align:center; color:var(--dim); padding:20px;">No chats yet</div>'; 
+        return; 
+    }
     
     var html = '';
-    for(var i=0; i<filtered.length; i++) {
+    for(var i = 0; i < filtered.length; i++) {
         var c = filtered[i];
-        var active = c.phone === currentPhone ? ' active' : '';
-        var badge = (c.unread > 0 && c.phone !== currentPhone) ? '<div class="badge">' + c.unread + '</div>' : '';
+        var cPhone = String(c.phone || '');
+        var cName = String(c.name || cPhone || 'Customer');
+        var cMsg = String(c.lastMessage || '');
+        var active = cPhone === currentPhone ? ' active' : '';
+        var badge = (c.unread > 0 && cPhone !== currentPhone) ? '<div class="badge">' + c.unread + '</div>' : '';
         var paused = c.aiPaused ? '⏸ ' : '';
-        
-        html += '<div class="chat-item' + active + '" onclick="openChat(\'' + c.phone + '\')">' +
-            '<div class="avatar">' + c.name.charAt(0).toUpperCase() + '</div>' +
+        var timeStr = c.lastSeen ? new Date(c.lastSeen).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
+        var initial = cName.charAt(0).toUpperCase() || 'C';
+
+        html += '<div class="chat-item' + active + '" onclick="openChat(\'' + cPhone + '\')">' +
+            '<div class="avatar">' + initial + '</div>' +
             '<div class="chat-info">' +
                 '<div style="display:flex; justify-content:space-between;">' +
-                    '<div class="chat-name">' + c.name + '</div>' +
-                    '<div style="font-size:10px; color:var(--dim);">' + new Date(c.lastSeen).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) + '</div>' +
+                    '<div class="chat-name">' + escapeHtml(cName) + '</div>' +
+                    '<div style="font-size:10px; color:var(--dim);">' + timeStr + '</div>' +
                 '</div>' +
                 '<div style="display:flex; justify-content:space-between; margin-top:4px;">' +
-                    '<div class="chat-preview">' + paused + c.lastMessage + '</div>' + badge +
+                    '<div class="chat-preview">' + paused + escapeHtml(cMsg) + '</div>' + badge +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -493,12 +581,12 @@ function renderSidebar() {
 }
 
 function openChat(phone) {
-    currentPhone = phone;
+    currentPhone = String(phone);
     document.getElementById('app').classList.add('chat-open');
     document.getElementById('noChat').style.display = 'none';
     document.getElementById('chatView').style.display = 'flex';
     document.getElementById('msgInput').focus();
-    fetchMessages(phone);
+    fetchMessages(currentPhone);
     renderSidebar();
 }
 
@@ -509,10 +597,13 @@ function closeChat() {
 
 function fetchMessages(phone, silent) {
     if(phone !== currentPhone) return;
-    fetch('/api/chats/' + phone).then(function(r){ return r.json(); }).then(function(data){
-        document.getElementById('c-name').textContent = data.name;
+    fetch('/api/chats/' + phone)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        var nameStr = String(data.name || data.phone || 'Customer');
+        document.getElementById('c-name').textContent = nameStr;
         document.getElementById('c-phone').textContent = '+' + data.phone;
-        document.getElementById('c-avatar').textContent = data.name.charAt(0).toUpperCase();
+        document.getElementById('c-avatar').textContent = nameStr.charAt(0).toUpperCase();
         
         var badge = document.getElementById('aiBadge');
         var btn = document.getElementById('toggleAiBtn');
@@ -520,27 +611,30 @@ function fetchMessages(phone, silent) {
         else { badge.className = 'ch-status st-on'; badge.textContent = '🤖 AI Active'; btn.textContent = '⏸ Pause AI'; }
 
         var box = document.getElementById('msgs');
-        var isBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 50;
+        var isBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 60;
         
+        var msgs = Array.isArray(data.messages) ? data.messages : [];
         var html = '';
-        for(var i=0; i<data.messages.length; i++) {
-            var m = data.messages[i];
+        for(var i = 0; i < msgs.length; i++) {
+            var m = msgs[i];
             var cls = 'msg-u', sender = 'Customer';
             if(m.sender === 'admin') { cls = 'msg-adm'; sender = 'You'; }
-            else if(m.sender === 'ai') { cls = 'msg-ai'; sender = 'AI'; }
+            else if(m.sender === 'ai') { cls = 'msg-ai'; sender = 'AI Bot'; }
             
             var media = '';
             if(m.mediaUrl) {
                 if(m.type === 'image') media = '<br><img src="' + m.mediaUrl + '">';
                 else if(m.type === 'video') media = '<br><video src="' + m.mediaUrl + '" controls></video>';
                 else if(m.type === 'audio') media = '<br><audio src="' + m.mediaUrl + '" controls></audio>';
-                else media = '<br><a href="' + m.mediaUrl + '" target="_blank" style="color:#fff;">📄 Open File</a>';
+                else media = '<br><a href="' + m.mediaUrl + '" target="_blank" style="color:#fff;">📄 Open Attachment</a>';
             }
-            html += '<div class="msg ' + cls + '">' + (m.content||'') + media + '<div class="m-meta">' + sender + ' • ' + new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) + '</div></div>';
+            var timeStr = m.timestamp ? new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
+            html += '<div class="msg ' + cls + '">' + escapeHtml(m.content || '') + media + '<div class="m-meta">' + sender + ' • ' + timeStr + '</div></div>';
         }
         box.innerHTML = html;
         if(isBottom || !silent) box.scrollTop = box.scrollHeight;
-    }).catch(function(e){});
+    })
+    .catch(function(e) {});
 }
 
 function sendMessage() {
@@ -552,13 +646,26 @@ function sendMessage() {
     if(!text) return;
 
     btn.textContent = '...'; btn.disabled = true;
-    fetch('/api/reply', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({phone:currentPhone, message:text}) })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-        if(d.success) { document.getElementById('msgInput').value = ''; fetchMessages(currentPhone); showToast('Message Sent', false); }
-        else { showToast('Error: ' + d.error, true); }
+    fetch('/api/reply', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ phone: currentPhone, message: text }) 
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if(d.success) { 
+            document.getElementById('msgInput').value = ''; 
+            fetchMessages(currentPhone); 
+            showToast('Message Sent', false); 
+        } else { 
+            showToast('Error: ' + (d.error || 'Failed'), true); 
+        }
         btn.textContent = 'Send'; btn.disabled = false;
-    }).catch(function(e){ showToast('Network Error', true); btn.textContent = 'Send'; btn.disabled = false; });
+    })
+    .catch(function(e) { 
+        showToast('Network Error', true); 
+        btn.textContent = 'Send'; btn.disabled = false; 
+    });
 }
 
 function handleFileSelect(e) {
@@ -567,79 +674,139 @@ function handleFileSelect(e) {
     document.getElementById('fName').textContent = pendingFile.name;
     document.getElementById('filePrev').style.display = 'flex';
 }
+
 function clearFile() {
-    pendingFile = null; document.getElementById('fileInput').value = '';
+    pendingFile = null; 
+    document.getElementById('fileInput').value = '';
     document.getElementById('filePrev').style.display = 'none';
 }
+
 function sendMediaWithText(caption) {
     var btn = document.getElementById('sendBtn');
     btn.textContent = 'Up...'; btn.disabled = true;
-    var fd = new FormData(); fd.append('phone', currentPhone); fd.append('media', pendingFile); fd.append('caption', caption);
-    fetch('/api/reply-media', { method:'POST', body:fd })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-        if(d.success) { document.getElementById('msgInput').value = ''; clearFile(); fetchMessages(currentPhone); showToast('Media Sent', false); }
-        else { showToast('Upload Failed: ' + d.error, true); }
+    var fd = new FormData(); 
+    fd.append('phone', currentPhone); 
+    fd.append('media', pendingFile); 
+    fd.append('caption', caption || '');
+    
+    fetch('/api/reply-media', { method: 'POST', body: fd })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if(d.success) { 
+            document.getElementById('msgInput').value = ''; 
+            clearFile(); 
+            fetchMessages(currentPhone); 
+            showToast('Media Sent', false); 
+        } else { 
+            showToast('Upload Failed: ' + (d.error || 'Failed'), true); 
+        }
         btn.textContent = 'Send'; btn.disabled = false;
-    }).catch(function(e){ showToast('Upload Error', true); btn.textContent = 'Send'; btn.disabled = false; });
+    })
+    .catch(function(e) { 
+        showToast('Upload Error', true); 
+        btn.textContent = 'Send'; btn.disabled = false; 
+    });
 }
 
 function startVoice() {
     try {
-        navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
-            mediaRec = new MediaRecorder(stream); audioChunks = []; recSecs = 0; recBlob = null;
-            mediaRec.ondataavailable = function(e){ if(e.data.size > 0) audioChunks.push(e.data); };
-            mediaRec.onstop = function(){
-                recBlob = new Blob(audioChunks, {type:'audio/webm'});
-                stream.getTracks().forEach(function(t){ t.stop(); });
-                document.getElementById('vSendBtn').style.display = 'block'; clearInterval(recTimer);
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+            mediaRec = new MediaRecorder(stream); 
+            audioChunks = []; recSecs = 0; recBlob = null;
+            mediaRec.ondataavailable = function(e) { if(e.data.size > 0) audioChunks.push(e.data); };
+            mediaRec.onstop = function() {
+                recBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                stream.getTracks().forEach(function(t) { t.stop(); });
+                document.getElementById('vSendBtn').style.display = 'block'; 
+                clearInterval(recTimer);
             };
             mediaRec.start();
-            document.getElementById('voiceUi').style.display = 'flex'; document.getElementById('vSendBtn').style.display = 'none';
-            recTimer = setInterval(function(){ recSecs++; document.getElementById('vTime').textContent = String(Math.floor(recSecs/60)).padStart(2,'0')+':'+String(recSecs%60).padStart(2,'0'); }, 1000);
-        }).catch(function(e){ showToast('Microphone permission denied', true); });
+            document.getElementById('voiceUi').style.display = 'flex'; 
+            document.getElementById('vSendBtn').style.display = 'none';
+            recTimer = setInterval(function() { 
+                recSecs++; 
+                document.getElementById('vTime').textContent = String(Math.floor(recSecs/60)).padStart(2,'0') + ':' + String(recSecs%60).padStart(2,'0'); 
+            }, 1000);
+        }).catch(function(e) { showToast('Microphone permission denied', true); });
     } catch(e) { showToast('Microphone error', true); }
 }
+
 function stopVoice() { if(mediaRec && mediaRec.state === 'recording') mediaRec.stop(); }
+
 function cancelVoice() {
     if(mediaRec && mediaRec.state === 'recording') mediaRec.stop();
-    recBlob = null; document.getElementById('voiceUi').style.display = 'none'; clearInterval(recTimer);
+    recBlob = null; 
+    document.getElementById('voiceUi').style.display = 'none'; 
+    clearInterval(recTimer);
 }
+
 function sendVoice() {
     if(!recBlob || !currentPhone) return;
     document.getElementById('vSendBtn').textContent = '...';
-    var fd = new FormData(); fd.append('phone', currentPhone); fd.append('voice', recBlob, 'voice.webm');
-    fetch('/api/send-voice', { method:'POST', body:fd })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-        if(d.success) { showToast('Voice Sent', false); fetchMessages(currentPhone); cancelVoice(); }
-        else { showToast('Voice Error: ' + d.error, true); document.getElementById('vSendBtn').textContent = 'Send Voice'; }
-    }).catch(function(e){ showToast('Voice Upload Error', true); document.getElementById('vSendBtn').textContent = 'Send Voice'; });
+    var fd = new FormData(); 
+    fd.append('phone', currentPhone); 
+    fd.append('voice', recBlob, 'voice.webm');
+    
+    fetch('/api/send-voice', { method: 'POST', body: fd })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if(d.success) { 
+            showToast('Voice Sent', false); 
+            fetchMessages(currentPhone); 
+            cancelVoice(); 
+        } else { 
+            showToast('Voice Error: ' + (d.error || 'Failed'), true); 
+            document.getElementById('vSendBtn').textContent = 'Send Voice'; 
+        }
+    })
+    .catch(function(e) { 
+        showToast('Voice Upload Error', true); 
+        document.getElementById('vSendBtn').textContent = 'Send Voice'; 
+    });
 }
 
 function toggleAI() {
     if(!currentPhone) return;
-    var c = chats.find(function(x){ return x.phone === currentPhone; });
+    var c = chats.find(function(x) { return x.phone === currentPhone; });
     var end = (c && c.aiPaused) ? 'resume' : 'pause';
-    fetch('/api/'+end+'/'+currentPhone, {method:'POST'}).then(function(){ fetchChats(true); });
+    fetch('/api/' + end + '/' + currentPhone, { method: 'POST' }).then(function() { fetchChats(true); });
 }
 
 function openModal(id) {
     document.getElementById(id).style.display = 'flex';
-    if(id === 'm-prompt') { fetch('/api/prompt').then(function(r){return r.json();}).then(function(d){document.getElementById('promptText').value=d.prompt;}); }
-    if(id === 'm-settings') { fetch('/api/settings').then(function(r){return r.json();}).then(function(d){ document.getElementById('setWelcome').value=d.welcomeMessage; document.getElementById('setAway').value=d.awayMessage; document.getElementById('setIsAway').checked=d.isAway; }); }
+    if(id === 'm-prompt') { 
+        fetch('/api/prompt').then(function(r){ return r.json(); }).then(function(d){ document.getElementById('promptText').value = d.prompt || ''; }); 
+    }
+    if(id === 'm-settings') { 
+        fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d){ 
+            document.getElementById('setWelcome').value = d.welcomeMessage || ''; 
+            document.getElementById('setAway').value = d.awayMessage || ''; 
+            document.getElementById('setIsAway').checked = !!d.isAway; 
+        }); 
+    }
 }
+
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
 function savePrompt() {
     var p = document.getElementById('promptText').value;
-    fetch('/api/prompt', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prompt:p})})
-    .then(function(){ showToast('Prompt Saved', false); closeModal('m-prompt'); });
+    fetch('/api/prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: p }) })
+    .then(function() { showToast('Prompt Saved', false); closeModal('m-prompt'); });
 }
+
 function saveSettings() {
-    var s = { welcomeMessage: document.getElementById('setWelcome').value, awayMessage: document.getElementById('setAway').value, isAway: document.getElementById('setIsAway').checked };
-    fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(s)})
-    .then(function(){ showToast('Settings Saved', false); closeModal('m-settings'); });
+    var s = { 
+        welcomeMessage: document.getElementById('setWelcome').value, 
+        awayMessage: document.getElementById('setAway').value, 
+        isAway: document.getElementById('setIsAway').checked 
+    };
+    fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) })
+    .then(function() { showToast('Settings Saved', false); closeModal('m-settings'); });
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 document.getElementById('msgInput').addEventListener('keydown', function(e) {
