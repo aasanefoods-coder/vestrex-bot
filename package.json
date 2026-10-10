@@ -1,7 +1,6 @@
 {
   "name": "vestrex-bot",
-  "version": "3.2.1",
-  "description": "Vestrex Clothing WhatsApp AI Bot",
+  "version": "4.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
